@@ -1,145 +1,143 @@
 # setup-cpp
 
-One-command C++ competitive programming setup for macOS — Homebrew GCC, `<bits/stdc++.h>`, precompiled headers, ASan/UBSan debug builds, a pretty-printer for all STL containers, and auto-configured VS Code IntelliSense + CPH.
+> Competitive programming C++ toolchain for macOS — Homebrew GCC, `bits/stdc++.h`, precompiled headers, sanitizers, and a full-featured debug pretty-printer. Works from any directory after a one-time install.
 
 ---
 
-## Quick start
+## Install
+
+### Via Homebrew (recommended)
 
 ```bash
-# 1. Install Homebrew GCC if you haven't already
-brew install gcc          # installs g++-16 (or latest)
-
-# 2. Run the installer (one time, or after brew upgrade gcc)
-bash install.sh
-
-# 3. Start a new problem — from any directory, forever
-cpnew                     # → sol.cpp  (ready to code)
-cprun sol.cpp             # compile (debug) + run
-cpc -r sol.cpp            # release/submit build
+brew tap will702/setup-cpp https://github.com/will702/setup-cpp
+brew install setup-cpp
+setup-cpp init
 ```
+
+### From source
+
+```bash
+git clone https://github.com/will702/setup-cpp.git
+cd setup-cpp
+bash install.sh          # global → /opt/homebrew/bin/
+```
+
+Other install targets:
+
+```bash
+bash install.sh --prefix ~/.local   # user   → ~/.local/bin/
+bash install.sh --local             # project → ./bin/
+bash install.sh --uninstall         # remove everything
+```
+
+> **After `brew upgrade gcc`:** run `setup-cpp update` (Homebrew) or `bash install.sh` (source) to rebuild precompiled headers.
 
 ---
 
-## Install modes
+## Daily workflow
 
 ```bash
-bash install.sh                    # global  → /opt/homebrew/bin/  (default)
-bash install.sh --prefix ~/.local  # user    → ~/.local/bin/
-bash install.sh --local            # project → ./bin/  in current dir
-bash install.sh --uninstall        # remove everything
-```
+# New problem
+cpnew                     # → sol.cpp  (full template, ready to code)
 
-After `brew upgrade gcc`: re-run `bash install.sh` to rebuild precompiled headers for the new version.
+# Edit sol.cpp …
+
+# Compile and run (debug mode)
+cprun sol.cpp             # compile + run; auto-feeds in.txt if present
+
+# Submit
+cpc -r sol.cpp            # release build — no sanitizers, no debug overhead
+```
 
 ---
 
 ## Commands
 
-### `cpnew` — create problem files from template
+### `cpnew` — stamp problem files from template
 
 ```bash
-cpnew                    # sol.cpp in current directory
-cpnew foo                # foo.cpp
-cpnew A B C D E          # A.cpp … E.cpp  (contest mode)
-cpnew --contest          # same as above, A–E by default
-cpnew --contest A-G      # A.cpp through G.cpp
-cpnew --dir round        # mkdir round/ with sol.cpp + in.txt + .vscode/
-cpnew --dir round A B C  # mkdir round/ with A.cpp B.cpp C.cpp + in.txt files
-cpnew -f sol             # overwrite existing sol.cpp
+cpnew                     # sol.cpp
+cpnew foo                 # foo.cpp
+cpnew A B C D E           # A.cpp … E.cpp
+cpnew --contest           # A.cpp … E.cpp  (Codeforces default)
+cpnew --contest A-G       # A.cpp … G.cpp
+cpnew --dir round         # mkdir round/ → sol.cpp + in.txt + .vscode/
+cpnew --dir round A B C   # mkdir round/ → A.cpp B.cpp C.cpp + in.txt files
+cpnew -f sol              # overwrite existing sol.cpp
 ```
 
-`debug.h` and `template.cpp` are stored globally at `~/.config/cp/` — **you never need to copy either file**. `#include "debug.h"` works from any directory when compiled with `cpc`.
+`debug.h` and `template.cpp` live at `~/.config/cp/` after install — **you never need to copy them**. `#include "debug.h"` resolves from any directory when compiled with `cpc`.
 
 ### `cpc` — compile
 
 ```bash
-cpc sol.cpp              # debug build (default)
-cpc -r sol.cpp           # release / submit build
-cpc --submit sol.cpp     # same as -r
-cpc -h                   # help
+cpc sol.cpp               # debug build (default)
+cpc -r sol.cpp            # release / submit build
+cpc -h                    # full flag reference
 ```
+
+**Debug build flags:** `-std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion -D_GLIBCXX_DEBUG -DLOCAL -g -fsanitize=address,undefined -fno-sanitize-recover=all`
+
+**Release build flags:** `-std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion`
 
 ### `cprun` — compile + run
 
 ```bash
-cprun sol.cpp            # debug build + run  (auto-reads in.txt if present)
-cprun -r sol.cpp         # release build + run
+cprun sol.cpp             # debug build + run
+cprun -r sol.cpp          # release build + run
 ```
 
-**Tip:** `cprun` feeds `in.txt` automatically in debug mode. Create it once per problem with sample input.
+Drop sample input in `in.txt` — `cprun` feeds it automatically in debug mode.
+
+### `setup-cpp` — manage the installation
+
+```bash
+setup-cpp init            # first-time setup (or after brew install)
+setup-cpp update          # rebuild PCH after brew upgrade gcc
+setup-cpp doctor          # check all components are wired up
+setup-cpp uninstall       # remove ~/.config/cp/
+setup-cpp -h              # help
+```
 
 ---
 
-## Why Homebrew GCC instead of Apple clang?
+## `debug.h` — pretty-printer for all STL types
 
-| Feature | Apple clang (`/usr/bin/g++`) | Homebrew GCC (`g++-16`) |
-|---|---|---|
-| `<bits/stdc++.h>` | ❌ | ✅ ships with GCC |
-| `__int128` | partial | ✅ |
-| Policy-based trees `<ext/pb_ds/…>` | ❌ | ✅ |
-| `__builtin_popcount` / `__builtin_clz` | partial | ✅ |
-| Matches Codeforces G++20 judge | ❌ | ✅ |
-
----
-
-## Debug flags (default `cpc` build)
-
-| Flag | What it does |
-|---|---|
-| `-O2` | Fast enough for local testing |
-| `-Wall -Wextra -Wshadow -Wconversion` | Catch shadowed vars, narrowing, common mistakes |
-| `-DLOCAL` | Activates `dbg()` in debug.h |
-| `-D_GLIBCXX_DEBUG` | Bounds-checks `vector[]`, iterator validity |
-| `-fsanitize=address,undefined` | Catches overflows, bad pointers, UB |
-| `-fno-sanitize-recover=all` | Abort on first error |
-| `-g` | Readable sanitizer stack traces |
-
-Release build (`cpc -r`): `-std=c++20 -O2 -Wall -Wextra -Wshadow -Wconversion` — no overhead, matches judge.
-
----
-
-## `debug.h` — pretty-printing
-
-Include after `<bits/stdc++.h>`. All macros compile to **nothing** without `-DLOCAL` — safe to leave in submissions.
+Include it after `<bits/stdc++.h>`. All macros expand to **nothing** without `-DLOCAL`, so they are safe to leave in submitted code.
 
 ```cpp
 #include <bits/stdc++.h>
-#include "debug.h"   // no path prefix needed — globally accessible via cpc
+#include "debug.h"
 ```
 
-### `dbg(expr [, expr …])`
+### `dbg(expr, ...)` — print any variable with source location
 
-```cpp
-int n = 5;
-vector<pair<int,int>> v = {{1,2},{3,4}};
-map<string,vector<int>> m = {{"a",{1,2}},{"b",{3}}};
-bitset<4> bs("1010");
-vector<bool> vb = {true, false, true};
-
-dbg(n, v, m, bs, vb);
-// [sol.cpp:9] n = 5  v = [(1, 2), (3, 4)]  m = {"a": [1, 2], "b": [3]}
-//             bs = "1010"  vb = [true, false, true]
+```
+[sol.cpp:12] n = 5  v = [(1, 2), (3, 4)]  m = {"a": [1, 2], "b": [3]}
+             bs = "1010"  vb = [true, false, true]
 ```
 
-Supported types (including **nested**):
+<details>
+<summary>All supported types</summary>
 
-| Type | Output |
+| Type | Output format |
 |---|---|
-| `int`, `ll`, `double`, `__int128`… | `42` |
-| `bool` | `true` / `false` (green/red in TTY) |
+| `int`, `long long`, `double`, `__int128` | `42` |
+| `bool` | `true` / `false` (green / red in TTY) |
 | `char` | `'x'` |
 | `string` | `"hello"` |
-| `pair<A,B>` | `(a, b)` |
-| `tuple<…>` (any arity) | `(a, b, c)` |
-| `vector`, `array`, `deque`, `list`, `set` | `[a, b, c]` |
-| `map`, `unordered_map` | `{k: v, k: v}` |
+| `pair<A, B>` | `(a, b)` |
+| `tuple<...>` (any arity) | `(a, b, c)` |
+| `vector`, `array`, `deque`, `list`, `set`, `multiset` | `[a, b, c]` |
+| `map`, `multimap`, `unordered_map` | `{k: v, k: v}` |
 | `stack`, `queue`, `priority_queue` | `[a, b, c]` (copy-drained) |
 | `bitset<N>` | `"01101"` |
-| `vector<bool>` | `[true, false]` (proxy-ref handled correctly) |
-| Nested e.g. `map<int,vector<pair<int,int>>>` | fully recursive |
+| `vector<bool>` | `[true, false]` (proxy reference handled) |
+| Nested — `map<int, vector<pair<int,int>>>` | fully recursive |
 
-### `dbg_arr(arr, n)` — indexed 1-D array
+</details>
+
+### `dbg_arr(arr, n)` — 1-D array with index labels
 
 ```cpp
 int a[] = {10, 20, 30};
@@ -159,74 +157,89 @@ dbg_grid(g, 2, 3);
 
 ---
 
-## Per-project configuration (`.cpcrc`)
+## Per-project config (`.cpcrc`)
 
-Drop a `.cpcrc` in any problem or contest folder to override compile settings for that directory tree:
+Place a `.cpcrc` in any contest or problem directory to override compiler settings for that tree:
 
 ```bash
 # .cpcrc
-CP_STD="c++17"               # use c++17 for this contest
-EXTRA_FLAGS="-DONLINE_JUDGE" # extra define for every build
+CP_STD="c++17"                # override standard (default: c++20)
+EXTRA_FLAGS="-DONLINE_JUDGE"  # append to every build
 ```
 
-`cpc` walks up the directory tree and picks up the nearest `.cpcrc` automatically.
+`cpc` walks up the directory tree and applies the nearest `.cpcrc` automatically.
+
+---
+
+## VS Code + CPH
+
+`setup-cpp init` configures both automatically:
+
+- **IntelliSense** — no more red squiggle under `#include <bits/stdc++.h>`. Copy the generated config into any workspace:
+  ```bash
+  cpnew --dir round      # copies .vscode/ automatically
+  # or manually:
+  mkdir -p .vscode && cp ~/.vscode-cp/c_cpp_properties.json .vscode/
+  ```
+- **CPH** (Competitive Programming Helper) — pre-configured to use `g++-16` with debug flags. Install the extension:
+  ```bash
+  code --install-extension DivyanshuAgrawal.competitive-programming-helper
+  ```
+
+---
+
+## Why Homebrew GCC over Apple clang
+
+Apple's `g++` is clang in disguise. Homebrew GCC is real GCC, which is what all major online judges use.
+
+| | Apple clang | Homebrew GCC |
+|---|:---:|:---:|
+| `<bits/stdc++.h>` | ✗ | ✓ |
+| `__int128` | partial | ✓ |
+| `<ext/pb_ds/…>` policy trees | ✗ | ✓ |
+| `__builtin_popcount` / `__builtin_clz` | partial | ✓ |
+| Matches Codeforces G++20 judge | ✗ | ✓ |
 
 ---
 
 ## Precompiled headers
 
-`install.sh` precompiles `bits/stdc++.h` twice (separate debug and release flag sets) into `~/.config/cp/pch-*/bits/stdc++.h.gch`. GCC recognises the PCH automatically, making `#include <bits/stdc++.h>` near-instant. If the PCH flags ever mismatch, GCC silently falls back to a normal parse — no build failure.
-
----
-
-## VS Code setup
-
-After `install.sh`, `c_cpp_properties.json` is generated at `~/.vscode-cp/`. Copy it into any workspace to eliminate the red squiggle under `#include <bits/stdc++.h>`:
-
-```bash
-cpnew --dir myround      # does this automatically
-# or manually:
-mkdir -p .vscode && cp ~/.vscode-cp/c_cpp_properties.json .vscode/
-```
-
-**CPH extension** (Competitive Programming Helper) is auto-configured to use `g++-16` with all debug flags:
-
-```bash
-code --install-extension DivyanshuAgrawal.competitive-programming-helper
-```
-
----
-
-## Policy-based data structures (GCC only)
-
-```cpp
-#include <ext/pb_ds/assoc_container.hpp>
-#include <ext/pb_ds/tree_policy.hpp>
-using namespace __gnu_pbds;
-using ordered_set = tree<int,null_type,less<int>,rb_tree_tag,
-                         tree_order_statistics_node_update>;
-
-ordered_set os;
-os.insert(1); os.insert(3); os.insert(5);
-os.find_by_order(1);   // iterator to 3 (0-indexed rank)
-os.order_of_key(4);    // 2  (count of elements < 4)
-```
+`bits/stdc++.h` is precompiled twice — once with debug flags, once with release flags — into `~/.config/cp/pch-*/bits/stdc++.h.gch`. GCC picks up the matching `.gch` automatically, making `#include <bits/stdc++.h>` near-instant. If flags ever mismatch, GCC silently falls back to a normal parse with no build failure.
 
 ---
 
 ## Codeforces judge compatibility
 
-| Judge | Local equivalent |
+| Judge | How to match locally |
 |---|---|
 | GNU G++17 | `CP_STD="c++17"` in `.cpcrc` |
 | GNU G++20 | default ✅ |
-| GNU G++23 | `CP_STD="c++23"` in `.cpcrc`, re-run `install.sh` |
+| GNU G++23 | `CP_STD="c++23"` in `.cpcrc`, then `setup-cpp update` |
+
+---
+
+## Policy-based data structures
+
+Available because you're compiling with real GCC:
+
+```cpp
+#include <ext/pb_ds/assoc_container.hpp>
+#include <ext/pb_ds/tree_policy.hpp>
+using namespace __gnu_pbds;
+
+using ordered_set = tree<int, null_type, less<int>,
+                         rb_tree_tag, tree_order_statistics_node_update>;
+
+ordered_set s = {1, 3, 5};
+s.find_by_order(1);   // iterator to 3  (0-indexed rank)
+s.order_of_key(4);    // 2  (elements strictly less than 4)
+```
 
 ---
 
 ## Uninstall
 
 ```bash
-bash install.sh --uninstall
-# removes /opt/homebrew/bin/{cpc,cprun,cpnew} and ~/.config/cp/
+setup-cpp uninstall           # removes ~/.config/cp/
+brew uninstall setup-cpp      # removes binaries (if installed via Homebrew)
 ```
