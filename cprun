@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# cprun — compile then run (competitive programming helper)
+# Usage:
+#   cprun sol.cpp              debug build + run (reads from stdin or in.txt)
+#   cprun -r sol.cpp           release build + run
+#   cprun --submit sol.cpp     same as -r
+#   cprun -h                   show help
+#
+# If an 'in.txt' file exists in the current directory and we're in debug mode,
+# it is fed automatically as stdin.  For release mode or when in.txt is absent,
+# stdin is inherited from the terminal (so you can type input interactively or
+# pipe it yourself).
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+# ── locate cpc (same directory as this script when installed side-by-side) ──
+CPC_PATH="$(dirname "$(realpath "$0")")/cpc"
+if [[ ! -x "$CPC_PATH" ]]; then
+    CPC_PATH="$(command -v cpc 2>/dev/null)" || {
+        echo "cprun: cannot find cpc — run install.sh" >&2
+        exit 1
+    }
+fi
+
+# ── collect flags and source, forwarding everything to cpc ────────────────
+RELEASE=0
+SHOW_HELP=0
+SOURCE=""
+PASS_FLAGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        -r|--submit|--release) RELEASE=1; PASS_FLAGS+=("$arg") ;;
+        -h|--help)             SHOW_HELP=1 ;;
+        -*)                    PASS_FLAGS+=("$arg") ;;
+        *)
+            if [[ -z "$SOURCE" ]]; then SOURCE="$arg"; fi
+            ;;
+    esac
+done
+
+if [[ $SHOW_HELP -eq 1 ]]; then
+    cat <<'EOF'
+cprun — compile and run (competitive programming helper)
+
+Usage:
+  cprun sol.cpp              debug build + run (auto-reads in.txt if present)
+  cprun -r sol.cpp           release build + run
+  cprun -h                   this help
+
+Tip: create in.txt in the problem directory — cprun feeds it automatically in
+     debug mode so you don't need to paste input each time.
+EOF
+    exit 0
+fi
+
+if [[ -z "$SOURCE" ]]; then
+    echo "cprun: no source file (try cprun -h)" >&2
+    exit 1
+fi
+
+# ── compile via cpc ───────────────────────────────────────────────────────
+"${CPC_PATH}" "${PASS_FLAGS[@]}" "${SOURCE}"
+
+# ── derive binary path (mirrors cpc logic) ────────────────────────────────
+BASE="${SOURCE%.cpp}"
+BASE="$(basename "$BASE")"
+BIN="./${BASE}"
+
+# ── run ───────────────────────────────────────────────────────────────────
+echo ""
+
+if [[ $RELEASE -eq 0 ]] && [[ -f "in.txt" ]]; then
+    echo "[cprun] running: ${BIN} < in.txt"
+    echo "────────────────────────────────────────"
+    "${BIN}" < in.txt
+else
+    if [[ $RELEASE -eq 0 ]]; then
+        echo "[cprun] running: ${BIN}  (type input, Ctrl-D to end)"
+    else
+        echo "[cprun] running: ${BIN}"
+    fi
+    echo "────────────────────────────────────────"
+    "${BIN}"
+fi
+
+EXIT_CODE=$?
+echo "────────────────────────────────────────"
+if [[ $EXIT_CODE -eq 0 ]]; then
+    echo "[cprun] exited OK (0)"
+else
+    echo "[cprun] exited with code ${EXIT_CODE}" >&2
+fi
+exit $EXIT_CODE

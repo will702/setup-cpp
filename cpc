@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# cpc — competitive-programming compile wrapper
+# Usage:
+#   cpc sol.cpp            debug build (sanitizers + LOCAL + _GLIBCXX_DEBUG)
+#   cpc -r sol.cpp         release/submit build (clean, fast, no overhead)
+#   cpc --submit sol.cpp   same as -r
+#   cpc -h                 show help
+#
+# Config lives in ~/.config/cp/cp.conf (written by install.sh)
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+# ── load config ───────────────────────────────────────────────────────────
+CP_CONF="${HOME}/.config/cp/cp.conf"
+if [[ ! -f "$CP_CONF" ]]; then
+    echo "cpc: config not found at $CP_CONF — run install.sh first" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+source "$CP_CONF"
+# CP_GXX, CP_STD, CP_DIR are now set
+
+# ── argument parsing ──────────────────────────────────────────────────────
+RELEASE=0
+SHOW_HELP=0
+SOURCE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -r|--submit|--release) RELEASE=1; shift ;;
+        -h|--help)             SHOW_HELP=1; shift ;;
+        -*)
+            echo "cpc: unknown flag '$1' (try -h)" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$SOURCE" ]]; then
+                echo "cpc: only one source file at a time" >&2
+                exit 1
+            fi
+            SOURCE="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ $SHOW_HELP -eq 1 ]]; then
+    cat <<'EOF'
+cpc — competitive-programming compile wrapper (Homebrew GCC)
+
+Usage:
+  cpc sol.cpp              debug build
+  cpc -r sol.cpp           release / submit build
+  cpc --submit sol.cpp     same as -r
+  cpc -h                   this help
+
+Debug flags  : -O2 -Wall -Wextra -Wshadow -Wconversion
+               -fsanitize=address,undefined -fno-sanitize-recover=all
+               -D_GLIBCXX_DEBUG -DLOCAL -g
+               (DLOCAL activates dbg() in debug.h)
+
+Release flags: -O2 -Wall -Wextra
+               (no sanitizers, no DLOCAL, no _GLIBCXX_DEBUG)
+
+Output binary: same name as source minus .cpp  (sol.cpp → ./sol)
+EOF
+    exit 0
+fi
+
+if [[ -z "$SOURCE" ]]; then
+    echo "cpc: no source file given (try cpc -h)" >&2
+    exit 1
+fi
+
+if [[ ! -f "$SOURCE" ]]; then
+    echo "cpc: file not found: $SOURCE" >&2
+    exit 1
+fi
+
+# ── derive output name ────────────────────────────────────────────────────
+BASE="${SOURCE%.cpp}"
+BASE="$(basename "$BASE")"
+OUT="./${BASE}"
+
+# ── build flags ───────────────────────────────────────────────────────────
+COMMON_FLAGS=(
+    "-std=${CP_STD}"
+    "-Wall" "-Wextra" "-Wshadow" "-Wconversion"
+    "-I${CP_DIR}/include"
+)
+
+if [[ $RELEASE -eq 0 ]]; then
+    # debug
+    FLAGS=(
+        "${COMMON_FLAGS[@]}"
+        "-O2"
+        "-I${CP_DIR}/pch-debug"
+        "-D_GLIBCXX_DEBUG"
+        "-DLOCAL"
+        "-g"
+        "-fsanitize=address,undefined"
+        "-fno-sanitize-recover=all"
+    )
+    LABEL="debug"
+else
+    # release / submit
+    FLAGS=(
+        "${COMMON_FLAGS[@]}"
+        "-O2"
+        "-I${CP_DIR}/pch-release"
+    )
+    LABEL="release"
+fi
+
+# ── compile ───────────────────────────────────────────────────────────────
+echo "[cpc] ${LABEL}: ${CP_GXX} ${SOURCE} → ${OUT}"
+"${CP_GXX}" "${FLAGS[@]}" -o "${OUT}" "${SOURCE}"
+echo "[cpc] OK"
