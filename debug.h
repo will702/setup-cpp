@@ -1,6 +1,16 @@
 // debug.h — competitive programming pretty-printer
 // Active only when compiled with -DLOCAL (stripped to nothing on judges).
 // Include AFTER <bits/stdc++.h>. Requires C++20 (template lambdas).
+//
+// Inspired by / combined with the classic CF debug template:
+//   codeforces.com/blog/entry/68809  &  codeforces.com/blog/entry/67830
+//
+// Usage:
+//   dbg(x, v, m)          →  [file:line] x = 42  v = [(1,2)]  m = {k: v}
+//   dbg_arr(arr, n)        →  [file:line] arr = [0:10, 1:20, 2:30]
+//   dbg_grid(g, rows, cols)→  [file:line] g (2x3):\n  1 2\n  3 4
+//
+// All macros expand to nothing without -DLOCAL (safe to leave in submissions).
 #pragma once
 
 #ifdef LOCAL
@@ -10,7 +20,7 @@
 
 namespace dbg_detail {
 
-// ── ANSI colours ──────────────────────────────────────────────────────────
+// ── ANSI colours (auto-off when stderr is not a TTY) ──────────────────────
 inline bool use_color() {
     static bool v = (isatty(STDERR_FILENO) != 0);
     return v;
@@ -26,45 +36,60 @@ inline constexpr const char* BOLD = "\033[1m";
 inline constexpr const char* RST  = "\033[0m";
 
 // ── Type traits ───────────────────────────────────────────────────────────
-template<class T> struct is_pair_t    : std::false_type {};
+
+template<class T> struct is_pair_t   : std::false_type {};
 template<class A, class B>
-struct is_pair_t<std::pair<A,B>>      : std::true_type  {};
+struct is_pair_t<std::pair<A,B>>     : std::true_type  {};
 
-template<class T> struct is_tuple_t   : std::false_type {};
+template<class T> struct is_tuple_t  : std::false_type {};
 template<class... Ts>
-struct is_tuple_t<std::tuple<Ts...>>  : std::true_type  {};
+struct is_tuple_t<std::tuple<Ts...>> : std::true_type  {};
 
+// bitset<N> (from CF template: prints as binary digit string)
+template<class T> struct is_bitset_t : std::false_type {};
+template<std::size_t N>
+struct is_bitset_t<std::bitset<N>>   : std::true_type  {};
+
+// Generic iterable (has begin/end). Strings excluded — printed as "hello".
 template<class T, class = void> struct is_iterable : std::false_type {};
 template<class T>
 struct is_iterable<T, std::void_t<
     decltype(std::begin(std::declval<const T&>())),
-    decltype(std::end(std::declval<const T&>()))>> : std::true_type {};
-// strings should print as "hello", not as a char sequence
-template<> struct is_iterable<std::string>        : std::false_type {};
-template<> struct is_iterable<const std::string>  : std::false_type {};
+    decltype(std::end  (std::declval<const T&>()))>> : std::true_type {};
+template<> struct is_iterable<std::string>       : std::false_type {};
+template<> struct is_iterable<const std::string> : std::false_type {};
 
-// Maps have ::mapped_type; plain sets do not
+// Maps have ::mapped_type; plain sets do not.
 template<class T, class = void> struct is_map_like : std::false_type {};
 template<class T>
 struct is_map_like<T, std::void_t<typename T::mapped_type>> : std::true_type {};
 
-// Stack / queue / priority_queue — detected by partial specialisation
-template<class T> struct is_stack_t   : std::false_type {};
-template<class T, class C>
-struct is_stack_t<std::stack<T,C>>    : std::true_type  {};
+// vector<bool> uses a proxy reference (not bool&) — needs explicit bool cast.
+// Detected by: value_type is bool AND reference is NOT a plain reference.
+// Catches std::vector<bool> and _GLIBCXX_DEBUG's __debug::vector<bool>.
+template<class T, class = void> struct has_proxy_ref : std::false_type {};
+template<class T>
+struct has_proxy_ref<T, std::void_t<typename T::reference, typename T::value_type>>
+    : std::bool_constant<std::is_same_v<typename T::value_type, bool>
+                      && !std::is_reference_v<typename T::reference>> {};
 
-template<class T> struct is_queue_t   : std::false_type {};
+// Stack / queue / priority_queue
+template<class T> struct is_stack_t  : std::false_type {};
 template<class T, class C>
-struct is_queue_t<std::queue<T,C>>    : std::true_type  {};
+struct is_stack_t<std::stack<T,C>>   : std::true_type  {};
 
-template<class T> struct is_pqueue_t  : std::false_type {};
+template<class T> struct is_queue_t  : std::false_type {};
+template<class T, class C>
+struct is_queue_t<std::queue<T,C>>   : std::true_type  {};
+
+template<class T> struct is_pqueue_t : std::false_type {};
 template<class T, class C, class Cmp>
 struct is_pqueue_t<std::priority_queue<T,C,Cmp>> : std::true_type {};
 
-// ── Forward declare the single print function (needed for recursion) ──────
+// ── Forward declaration (required for mutual recursion in print body) ──────
 template<class T> void print(std::ostream& os, const T& v);
 
-// ── Tuple helper (needs index_sequence, defined before print body) ────────
+// ── Tuple helper ──────────────────────────────────────────────────────────
 template<class Tup, std::size_t... Is>
 void print_tuple_impl(std::ostream& os, const Tup& t, std::index_sequence<Is...>) {
     os << col(CYN) << "(" << col(RST);
@@ -72,18 +97,19 @@ void print_tuple_impl(std::ostream& os, const Tup& t, std::index_sequence<Is...>
     auto one = [&](const auto& x) {
         if (!first) os << col(CYN) << ", " << col(RST);
         first = false;
-        print(os, x);        // recursive — resolved at instantiation time
+        print(os, x);
     };
     (one(std::get<Is>(t)), ...);
     os << col(CYN) << ")" << col(RST);
 }
 
-// ── Single print function — all dispatching via if constexpr ─────────────
-// Having ONE template function avoids overload-resolution ambiguity.
+// ── Single print function — all dispatch via if constexpr ─────────────────
+// One function = zero overload-resolution ambiguity (critical with _GLIBCXX_DEBUG
+// which wraps containers into std::__debug::vector etc.).
 template<class T>
 void print(std::ostream& os, const T& v) {
 
-    // --- pair ------------------------------------------------------------
+    // ── pair ──────────────────────────────────────────────────────────────
     if constexpr (is_pair_t<T>::value) {
         os << col(CYN) << "(" << col(RST);
         print(os, v.first);
@@ -91,42 +117,65 @@ void print(std::ostream& os, const T& v) {
         print(os, v.second);
         os << col(CYN) << ")" << col(RST);
 
-    // --- tuple -----------------------------------------------------------
+    // ── tuple (any arity via index_sequence) ──────────────────────────────
     } else if constexpr (is_tuple_t<T>::value) {
         print_tuple_impl(os, v, std::make_index_sequence<std::tuple_size_v<T>>{});
 
-    // --- string (special-case before the iterable branch) ----------------
+    // ── string / c-string ─────────────────────────────────────────────────
     } else if constexpr (std::is_same_v<std::remove_cv_t<T>, std::string>
                       || std::is_same_v<std::remove_cv_t<T>, const char*>
                       || std::is_convertible_v<T, std::string_view>) {
         os << col(MAG) << '"' << v << '"' << col(RST);
 
-    // --- stack (copy-drain front → back) ---------------------------------
+    // ── bitset<N> — print as binary digit string, e.g. "0110" ────────────
+    // (from CF template: codeforces.com/blog/entry/68809)
+    } else if constexpr (is_bitset_t<T>::value) {
+        os << col(MAG) << '"' << col(RST);
+        for (std::size_t i = 0; i < v.size(); ++i)
+            os << col(BOLD) << (v[i] ? '1' : '0') << col(RST);
+        os << col(MAG) << '"' << col(RST);
+
+    // ── vector<bool> — proxy reference: must cast to bool explicitly ──────
+    // (from CF template: plain iteration yields std::_Bit_reference, not bool,
+    //  so the bool branch below would be skipped and 0/1 printed instead of
+    //  true/false. Detected via has_proxy_ref trait.)
+    } else if constexpr (is_iterable<T>::value && has_proxy_ref<T>::value) {
+        os << col(GRN) << "[" << col(RST);
+        bool first = true;
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            if (!first) os << col(GRN) << ", " << col(RST);
+            first = false;
+            bool b = v[i];   // explicit cast from proxy to real bool
+            print(os, b);
+        }
+        os << col(GRN) << "]" << col(RST);
+
+    // ── stack (copy-drain bottom → top order) ─────────────────────────────
     } else if constexpr (is_stack_t<T>::value) {
-        auto s = v;   // copy by value
+        auto s = v;
         std::vector<typename T::value_type> tmp;
         while (!s.empty()) { tmp.push_back(s.top()); s.pop(); }
         std::reverse(tmp.begin(), tmp.end());
         print(os, tmp);
 
-    // --- queue (copy-drain) ----------------------------------------------
+    // ── queue (copy-drain front → back) ───────────────────────────────────
     } else if constexpr (is_queue_t<T>::value) {
         auto q = v;
         std::vector<typename T::value_type> tmp;
         while (!q.empty()) { tmp.push_back(q.front()); q.pop(); }
         print(os, tmp);
 
-    // --- priority_queue (copy-drain) -------------------------------------
+    // ── priority_queue (copy-drain, highest priority first) ───────────────
     } else if constexpr (is_pqueue_t<T>::value) {
         auto pq = v;
         std::vector<typename T::value_type> tmp;
         while (!pq.empty()) { tmp.push_back(pq.top()); pq.pop(); }
         print(os, tmp);
 
-    // --- generic iterable: vector, array, deque, set, map, … ------------
+    // ── generic iterable: vector, array, deque, set, map, … ──────────────
     } else if constexpr (is_iterable<T>::value) {
         if constexpr (is_map_like<T>::value) {
-            // map / multimap / unordered_map → {k: v, …}
+            // map / multimap / unordered_map  →  {k: v, k: v}
             os << col(YEL) << "{" << col(RST);
             bool first = true;
             for (const auto& [k, val] : v) {
@@ -138,7 +187,7 @@ void print(std::ostream& os, const T& v) {
             }
             os << col(YEL) << "}" << col(RST);
         } else {
-            // sequence / set / multiset → [a, b, c]
+            // sequence / set / multiset  →  [a, b, c]
             os << col(GRN) << "[" << col(RST);
             bool first = true;
             for (const auto& x : v) {
@@ -149,21 +198,22 @@ void print(std::ostream& os, const T& v) {
             os << col(GRN) << "]" << col(RST);
         }
 
-    // --- bool ------------------------------------------------------------
+    // ── bool ──────────────────────────────────────────────────────────────
     } else if constexpr (std::is_same_v<std::remove_cv_t<T>, bool>) {
         os << (v ? col(GRN) : col(RED)) << (v ? "true" : "false") << col(RST);
 
-    // --- char ------------------------------------------------------------
+    // ── char ──────────────────────────────────────────────────────────────
     } else if constexpr (std::is_same_v<std::remove_cv_t<T>, char>) {
         os << col(MAG) << "'" << v << "'" << col(RST);
 
-    // --- scalar fallback (int, long, double, __int128, …) ----------------
+    // ── scalar fallback: int, long, double, __int128, enum, … ────────────
     } else {
         os << col(BOLD) << v << col(RST);
     }
 }
 
-// ── name-splitting: "a, b, vec" → ["a", "b", "vec"] ─────────────────────
+// ── Name-splitting: "#a, b, vec" → ["a", "b", "vec"] ─────────────────────
+// Splits on top-level commas only (respects nested <>, (), [], {}).
 inline std::vector<std::string> split_names(const char* raw) {
     std::vector<std::string> names;
     int depth = 0;
@@ -189,11 +239,14 @@ inline std::vector<std::string> split_names(const char* raw) {
 
 } // namespace dbg_detail
 
-// ── Public macros ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Public macros
+// ═══════════════════════════════════════════════════════════════════════════
 
 // dbg(expr [, expr …])
-// Prints: [file:line] name1 = val1  name2 = val2
-// C++20 template lambda gives us a real variadic pack from __VA_ARGS__.
+// Output: [file:line] name1 = val1  name2 = val2
+// Uses C++20 template lambda so __VA_ARGS__ becomes a real parameter pack.
+// Format matches CF blog approach but adds file:line and name=value pairing.
 #define dbg(...) \
     do { \
         auto _dbg_names = dbg_detail::split_names(#__VA_ARGS__); \
@@ -216,6 +269,7 @@ inline std::vector<std::string> split_names(const char* raw) {
     } while(0)
 
 // dbg_arr(arr, n) — 1-D array/vector with 0-based index labels
+// Output: [file:line] arr = [0:10, 1:20, 2:30]
 #define dbg_arr(arr, n) \
     do { \
         std::cerr << dbg_detail::col(dbg_detail::RED) \
@@ -237,6 +291,7 @@ inline std::vector<std::string> split_names(const char* raw) {
     } while(0)
 
 // dbg_grid(grid, rows, cols) — 2-D grid (vector<vector<T>> or T[R][C])
+// Output: [file:line] grid (2x3):\n  1 2 3\n  4 5 6
 #define dbg_grid(grid, rows, cols) \
     do { \
         std::cerr << dbg_detail::col(dbg_detail::RED) \
@@ -254,7 +309,7 @@ inline std::vector<std::string> split_names(const char* raw) {
         } \
     } while(0)
 
-#else // !LOCAL  →  all macros compile to nothing
+#else // !LOCAL  →  all macros expand to nothing (zero overhead on judges)
 
 #define dbg(...)         do {} while(0)
 #define dbg_arr(a,n)     do {} while(0)
