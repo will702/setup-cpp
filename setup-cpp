@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+# setup-cpp — post-install initialiser for the setup-cpp Homebrew formula
+#
+# Usage:
+#   setup-cpp init       first-time setup: detect GCC, build PCH, configure VS Code
+#   setup-cpp update     re-run after 'brew upgrade gcc'
+#   setup-cpp uninstall  remove ~/.config/cp/
+#   setup-cpp doctor     check everything is wired up correctly
+#   setup-cpp -h         this help
+#
+# When installed via Homebrew, assets (debug.h, template.cpp) live in
+# $(brew --prefix)/share/setup-cpp/.  When run from the source repo directly
+# (e.g. bash setup-cpp init), SCRIPT_DIR is used as the asset source.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── ANSI ─────────────────────────────────────────────────────────────────
+RED="\033[0;31m"; GRN="\033[0;32m"; YEL="\033[0;33m"
+CYN="\033[0;36m"; BOLD="\033[1m"; RST="\033[0m"
+ok()   { echo -e "${GRN}✓${RST} $*"; }
+info() { echo -e "${CYN}→${RST} $*"; }
+warn() { echo -e "${YEL}!${RST} $*"; }
+die()  { echo -e "${RED}✗ ERROR:${RST} $*" >&2; exit 1; }
+
+# ── locate asset source (Homebrew share dir or repo clone) ────────────────
+find_asset_dir() {
+    # 1. Homebrew share dir (when installed via brew install setup-cpp)
+    local brew_prefix
+    brew_prefix="$(brew --prefix 2>/dev/null)" || true
+    if [[ -n "$brew_prefix" && -f "${brew_prefix}/share/setup-cpp/debug.h" ]]; then
+        echo "${brew_prefix}/share/setup-cpp"
+        return
+    fi
+    # 2. Same directory as this script (repo clone or --local install)
+    if [[ -f "${SCRIPT_DIR}/debug.h" ]]; then
+        echo "${SCRIPT_DIR}"
+        return
+    fi
+    die "Cannot find debug.h. Install via 'brew install setup-cpp' or run from the repo."
+}
+
+# ── detect highest Homebrew GCC ───────────────────────────────────────────
+find_gxx() {
+    local gxx="" highest=0
+    for bin in /opt/homebrew/bin/g++-*; do
+        [[ -x "$bin" ]] || continue
+        local ver="${bin##*g++-}"
+        [[ "$ver" =~ ^[0-9]+$ ]] || continue
+        if (( ver > highest )); then highest=$ver; gxx="$bin"; fi
+    done
+    [[ -n "$gxx" ]] || die "No Homebrew GCC found.\n  Fix: brew install gcc"
+    echo "$gxx"
+}
+
+# ── core setup ────────────────────────────────────────────────────────────
+cmd_init() {
+    local force="${1:-}"
+    local CP_STD="c++20"
+    local CP_DIR="${HOME}/.config/cp"
+    local ASSET_DIR
+    ASSET_DIR="$(find_asset_dir)"
+
+    echo -e "${BOLD}══════════════════════════════════════════════════════${RST}"
+    echo -e "${BOLD}  setup-cpp init — Homebrew GCC + bits/stdc++.h + PCH ${RST}"
+    echo -e "${BOLD}══════════════════════════════════════════════════════${RST}"
+    echo ""
+
+    # 1. GCC
+    info "Detecting Homebrew GCC …"
+    local GXX
+    GXX="$(find_gxx)"
+    local GXX_CMD
+    GXX_CMD="$(basename "$GXX")"
+    ok "Found: ${GXX}  ($("$GXX" --version | head -1))"
+
+    # 2. bits/stdc++.h
+    info "Locating bits/stdc++.h …"
+    local STDC_H
+    STDC_H="$(echo '#include <bits/stdc++.h>' \
+        | "$GXX" -std="$CP_STD" -E -x c++ - 2>/dev/null \
+        | grep -m1 'stdc++\.h' \
+        | sed 's/^# [0-9]* "//;s/".*//')" || true
+    [[ -n "$STDC_H" && -f "$STDC_H" ]] \
+        || die "Cannot locate bits/stdc++.h — Homebrew GCC may be incomplete."
+    ok "bits/stdc++.h → ${STDC_H}"
+
+    # 3. ~/.config/cp layout
+    info "Setting up ${CP_DIR} …"
+    mkdir -p "${CP_DIR}/include" "${CP_DIR}/pch-debug/bits" "${CP_DIR}/pch-release/bits"
+
+    # 4. Install assets
+    cp "${ASSET_DIR}/debug.h"    "${CP_DIR}/include/debug.h"
+    cp "${ASSET_DIR}/template.cpp" "${CP_DIR}/template.cpp"
+    ok "debug.h    → ${CP_DIR}/include/debug.h"
+    ok "template   → ${CP_DIR}/template.cpp"
+
+    # 5. PCH — debug
+    info "Precompiling stdc++.h [debug] …"
+    cp "$STDC_H" "${CP_DIR}/pch-debug/bits/stdc++.h"
+    "$GXX" -std="$CP_STD" -O2 -Wall -Wextra -Wshadow -Wconversion \
+           -D_GLIBCXX_DEBUG -DLOCAL -g \
+           -fsanitize=address,undefined -fno-sanitize-recover=all \
+           -I"${CP_DIR}/include" \
+           -x c++-header "${CP_DIR}/pch-debug/bits/stdc++.h" \
+           -o "${CP_DIR}/pch-debug/bits/stdc++.h.gch"
+    ok "PCH [debug]   → ${CP_DIR}/pch-debug/bits/stdc++.h.gch"
+
+    # 6. PCH — release
+    info "Precompiling stdc++.h [release] …"
+    cp "$STDC_H" "${CP_DIR}/pch-release/bits/stdc++.h"
+    "$GXX" -std="$CP_STD" -O2 -Wall -Wextra -Wshadow -Wconversion \
+           -I"${CP_DIR}/include" \
+           -x c++-header "${CP_DIR}/pch-release/bits/stdc++.h" \
+           -o "${CP_DIR}/pch-release/bits/stdc++.h.gch"
+    ok "PCH [release] → ${CP_DIR}/pch-release/bits/stdc++.h.gch"
+
+    # 7. cp.conf
+    cat > "${CP_DIR}/cp.conf" <<CONF
+# Written by setup-cpp init — re-run after brew upgrade gcc
+CP_GXX="${GXX}"
+CP_STD="${CP_STD}"
+CP_DIR="${CP_DIR}"
+CONF
+    ok "Config → ${CP_DIR}/cp.conf"
+
+    # 8. VS Code IntelliSense config
+    info "Generating VS Code IntelliSense config …"
+    local GCC_INCS=()
+    while IFS= read -r line; do
+        GCC_INCS+=("$line")
+    done < <(
+        "$GXX" -std="$CP_STD" -E -x c++ -v /dev/null 2>&1 \
+        | awk '/#include <\.\.\.>/{p=1;next} /End of search/{p=0} p{gsub(/^ +/,""); print}' \
+        | grep -v '(framework'
+    )
+    local INC_LINES=()
+    INC_LINES+=("                \"\${workspaceFolder}/**\"")
+    INC_LINES+=("                \"\${HOME}/.config/cp/include\"")
+    for inc in "${GCC_INCS[@]}"; do
+        if [[ -d "$inc" && "$inc" != *Frameworks* ]]; then
+            local norm
+            norm="$(cd "$inc" 2>/dev/null && pwd)" && inc="$norm"
+            INC_LINES+=("                \"${inc}\"")
+        fi
+    done
+    local INC_JSON=""
+    for i in "${!INC_LINES[@]}"; do
+        if (( i < ${#INC_LINES[@]} - 1 )); then INC_JSON+="${INC_LINES[$i]},"$'\n'
+        else INC_JSON+="${INC_LINES[$i]}"; fi
+    done
+
+    mkdir -p "${HOME}/.vscode-cp"
+    cat > "${HOME}/.vscode-cp/c_cpp_properties.json" <<JSONEOF
+{
+    "configurations": [
+        {
+            "name": "Mac (Homebrew GCC)",
+            "includePath": [
+${INC_JSON}
+            ],
+            "defines": ["LOCAL", "_GLIBCXX_DEBUG"],
+            "compilerPath": "${GXX}",
+            "cppStandard": "${CP_STD}",
+            "intelliSenseMode": "linux-gcc-arm64",
+            "compilerArgs": ["-std=${CP_STD}", "-Wall", "-Wextra"]
+        }
+    ],
+    "version": 4
+}
+JSONEOF
+    ok "c_cpp_properties.json → ${HOME}/.vscode-cp/c_cpp_properties.json"
+
+    # Copy VS Code templates (tasks.json) if available from asset dir
+    local vscode_tmpl="${ASSET_DIR}/vscode-templates"
+    if [[ -d "$vscode_tmpl" ]]; then
+        mkdir -p "${HOME}/.vscode-cp"
+        cp "${vscode_tmpl}/tasks.json" "${HOME}/.vscode-cp/tasks.json" 2>/dev/null || true
+    fi
+
+    # 9. CPH (VS Code Competitive Programming Helper) settings
+    local VSCODE_SETTINGS="${HOME}/Library/Application Support/Code/User/settings.json"
+    if [[ -f "$VSCODE_SETTINGS" ]]; then
+        local CPH_ARGS="-std=${CP_STD} -O2 -Wall -Wextra -Wshadow -DLOCAL \
+-I${CP_DIR}/include -I${CP_DIR}/pch-debug -D_GLIBCXX_DEBUG \
+-g -fsanitize=address,undefined -fno-sanitize-recover=all"
+        python3 - "$VSCODE_SETTINGS" "$GXX_CMD" "$CPH_ARGS" <<'PYEOF'
+import json, sys
+path, cmd, args = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f: cfg = json.load(f)
+cfg["cph.language.cpp.Command"] = cmd
+cfg["cph.language.cpp.Args"]    = args
+with open(path, "w") as f: json.dump(cfg, f, indent=4); f.write("\n")
+PYEOF
+        ok "CPH → VS Code User settings.json  (command=${GXX_CMD})"
+    fi
+
+    # 10. Self-test
+    echo ""
+    info "Running self-test …"
+    local tmpdir=""
+    tmpdir="$(mktemp -d)"
+    trap '[[ -n "${tmpdir:-}" ]] && rm -rf "$tmpdir"' EXIT
+    cat > "${tmpdir}/test.cpp" <<'CPPEOF'
+#include <bits/stdc++.h>
+#include "debug.h"
+using namespace std;
+int main() {
+    vector<pair<int,int>> v={{1,2},{3,4}};
+    map<int,int> m={{5,6}};
+    dbg(v, m);
+    cout << "OK\n";
+}
+CPPEOF
+    pushd "$tmpdir" > /dev/null
+    cpc test.cpp 2>&1
+    local out
+    out=$(./test 2>/dev/null)
+    [[ "$out" == "OK" ]] && ok "Self-test passed" || warn "Unexpected: '${out}'"
+    popd > /dev/null
+
+    echo ""
+    echo -e "${BOLD}${GRN}══ Ready! ══${RST}"
+    echo ""
+    echo -e "  ${BOLD}New problem:${RST}    cpnew              → sol.cpp"
+    echo -e "  ${BOLD}New contest:${RST}    cpnew A B C D E    → A.cpp … E.cpp"
+    echo -e "  ${BOLD}New workspace:${RST}  cpnew --dir round  → round/ with .vscode/"
+    echo -e "  ${BOLD}Compile:${RST}        cpc sol.cpp        debug build"
+    echo -e "  ${BOLD}Run:${RST}            cprun sol.cpp      compile + run"
+    echo -e "  ${BOLD}Submit:${RST}         cpc -r sol.cpp     release build"
+    echo ""
+    echo -e "  ${YEL}Tip:${RST} #include \"debug.h\" works from ANY directory — no copying needed."
+    echo ""
+}
+
+# ── doctor ────────────────────────────────────────────────────────────────
+cmd_doctor() {
+    local ok_count=0 warn_count=0
+    _chk() {
+        local label="$1" cmd="$2" fix="${3:-}"
+        if eval "$cmd" &>/dev/null; then
+            ok "$label"
+            (( ok_count++ )) || true
+        else
+            warn "$label"
+            [[ -n "$fix" ]] && echo -e "       Fix: ${fix}"
+            (( warn_count++ )) || true
+        fi
+    }
+
+    echo -e "${BOLD}setup-cpp doctor${RST}"
+    echo ""
+    _chk "Homebrew GCC found"        "ls /opt/homebrew/bin/g++-* 2>/dev/null | grep -q ." \
+         "brew install gcc"
+    _chk "cp.conf exists"            "[[ -f ${HOME}/.config/cp/cp.conf ]]" \
+         "setup-cpp init"
+    _chk "debug.h installed"         "[[ -f ${HOME}/.config/cp/include/debug.h ]]" \
+         "setup-cpp init"
+    _chk "template.cpp installed"    "[[ -f ${HOME}/.config/cp/template.cpp ]]" \
+         "setup-cpp init"
+    _chk "PCH [debug] built"         "[[ -f ${HOME}/.config/cp/pch-debug/bits/stdc++.h.gch ]]" \
+         "setup-cpp init"
+    _chk "PCH [release] built"       "[[ -f ${HOME}/.config/cp/pch-release/bits/stdc++.h.gch ]]" \
+         "setup-cpp init"
+    _chk "cpc on PATH"               "command -v cpc" \
+         "brew install setup-cpp  or  bash install.sh"
+    _chk "cprun on PATH"             "command -v cprun" \
+         "brew install setup-cpp  or  bash install.sh"
+    _chk "cpnew on PATH"             "command -v cpnew" \
+         "brew install setup-cpp  or  bash install.sh"
+    _chk "VS Code IntelliSense cfg"  "[[ -f ${HOME}/.vscode-cp/c_cpp_properties.json ]]" \
+         "setup-cpp init"
+
+    echo ""
+    if (( warn_count == 0 )); then
+        echo -e "${GRN}All checks passed.${RST}"
+    else
+        echo -e "${YEL}${warn_count} check(s) need attention.${RST}  Run: setup-cpp init"
+    fi
+}
+
+# ── uninstall ─────────────────────────────────────────────────────────────
+cmd_uninstall() {
+    info "Removing ~/.config/cp …"
+    rm -rf "${HOME}/.config/cp"
+    ok "Done.  (Homebrew binaries remain — run 'brew uninstall setup-cpp' to remove them)"
+}
+
+# ── help ──────────────────────────────────────────────────────────────────
+cmd_help() {
+    cat <<'EOF'
+setup-cpp — competitive programming C++ setup tool
+
+Commands:
+  setup-cpp init       detect GCC, build PCH, install debug.h/template, configure VS Code
+  setup-cpp update     same as init (re-run after 'brew upgrade gcc')
+  setup-cpp uninstall  remove ~/.config/cp/
+  setup-cpp doctor     check all components are installed correctly
+  setup-cpp -h         this help
+
+Install via Homebrew:
+  brew tap will702/setup-cpp https://github.com/will702/setup-cpp
+  brew install setup-cpp
+  setup-cpp init
+
+Daily workflow:
+  cpnew                    sol.cpp from template
+  cpnew A B C D E          contest files A.cpp … E.cpp
+  cpnew --dir round A B C  workspace directory with .vscode/
+  cpc sol.cpp              debug build (ASan + dbg() active)
+  cprun sol.cpp            compile + run
+  cpc -r sol.cpp           release / submit build
+EOF
+}
+
+# ── dispatch ──────────────────────────────────────────────────────────────
+case "${1:-}" in
+    init|update) cmd_init "$@" ;;
+    uninstall)   cmd_uninstall ;;
+    doctor)      cmd_doctor ;;
+    -h|--help|"") cmd_help ;;
+    *) echo "setup-cpp: unknown command '$1'  (try setup-cpp -h)" >&2; exit 1 ;;
+esac

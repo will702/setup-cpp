@@ -25,8 +25,8 @@ LOCAL_INSTALL=0
 
 case "${1:-}" in
     --uninstall)
-        info "Uninstalling cpc / cprun / cpnew …"
-        rm -f /opt/homebrew/bin/cpc /opt/homebrew/bin/cprun /opt/homebrew/bin/cpnew
+        info "Uninstalling cpc / cprun / cpnew / setup-cpp …"
+        rm -f /opt/homebrew/bin/cpc /opt/homebrew/bin/cprun /opt/homebrew/bin/cpnew /opt/homebrew/bin/setup-cpp
         rm -rf "${HOME}/.config/cp"
         ok "Uninstalled."
         exit 0
@@ -144,7 +144,7 @@ ok "Config → ${CP_DIR}/cp.conf"
 # ── 10. Install cpc / cprun / cpnew ──────────────────────────────────────
 info "Installing tools → ${INSTALL_PREFIX}/ …"
 mkdir -p "$INSTALL_PREFIX"
-for tool in cpc cprun cpnew; do
+for tool in cpc cprun cpnew setup-cpp; do
     SRC="${SCRIPT_DIR}/${tool}"
     [[ -f "$SRC" ]] || die "${tool} not found in ${SCRIPT_DIR}"
     cp "$SRC" "${INSTALL_PREFIX}/${tool}"
@@ -292,6 +292,8 @@ echo -e "  ${YEL}Note:${RST} #include \"debug.h\" works from ANY directory — n
 echo -e "  ${YEL}Tip:${RST}  re-run this script after 'brew upgrade gcc' to rebuild PCH."
 echo ""
 echo -e "${BOLD}Install modes:${RST}"
+echo -e "  Homebrew:         brew tap will702/setup-cpp https://github.com/will702/setup-cpp"
+echo -e "                    brew install setup-cpp && setup-cpp init"
 echo -e "  Global (default): bash install.sh"
 echo -e "  User:             bash install.sh --prefix ~/.local"
 echo -e "  Per-project:      bash install.sh --local  (installs to ./bin/)"
