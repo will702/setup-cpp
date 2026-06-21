@@ -1,10 +1,10 @@
 class SetupCpp < Formula
   desc "C++ competitive programming setup for macOS (Homebrew GCC, bits/stdc++.h, debug tools)"
   homepage "https://github.com/will702/setup-cpp"
-  url "https://github.com/will702/setup-cpp/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "7b9b7f31b674238b8ee39932163765fef10093adeaec0fc6969ff9631f6968ee"
+  url "https://github.com/will702/setup-cpp/archive/refs/tags/v1.0.1.tar.gz"
+  sha256 "12bef20d7d7ecfabbe2a5a4eaa1a193747ed6a41ba7ae4cbd5b981a70f943c82"
   license "MIT"
-  version "1.0.0"
+  version "1.0.1"
 
   head "https://github.com/will702/setup-cpp.git", branch: "main"
 
