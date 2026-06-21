@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — Competitive Programming C++ setup for macOS (Homebrew GCC)
-# Run once (or after brew upgrade gcc) to install cpc/cprun and build PCH.
-# Usage: bash install.sh [--uninstall]
+#
+# Usage:
+#   bash install.sh                    global install  → /opt/homebrew/bin/
+#   bash install.sh --prefix ~/.local  user install    → ~/.local/bin/
+#   bash install.sh --local            per-project     → ./bin/  (current dir)
+#   bash install.sh --uninstall        remove global install + ~/.config/cp
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -15,18 +19,34 @@ info() { echo -e "${CYN}→${RST} $*"; }
 warn() { echo -e "${YEL}!${RST} $*"; }
 die()  { echo -e "${RED}✗ ERROR:${RST} $*" >&2; exit 1; }
 
-# ── uninstall ─────────────────────────────────────────────────────────────
-if [[ "${1:-}" == "--uninstall" ]]; then
-    info "Uninstalling cpc / cprun …"
-    rm -f /opt/homebrew/bin/cpc /opt/homebrew/bin/cprun
-    rm -rf "${HOME}/.config/cp"
-    ok "Uninstalled."
-    exit 0
-fi
+# ── parse top-level flags ─────────────────────────────────────────────────
+INSTALL_PREFIX="/opt/homebrew/bin"
+LOCAL_INSTALL=0
+
+case "${1:-}" in
+    --uninstall)
+        info "Uninstalling cpc / cprun / cpnew …"
+        rm -f /opt/homebrew/bin/cpc /opt/homebrew/bin/cprun /opt/homebrew/bin/cpnew
+        rm -rf "${HOME}/.config/cp"
+        ok "Uninstalled."
+        exit 0
+        ;;
+    --prefix)
+        [[ -z "${2:-}" ]] && die "--prefix requires a path (e.g. --prefix ~/.local)"
+        INSTALL_PREFIX="$(eval echo "$2")"   # expand ~ if present
+        shift 2
+        ;;
+    --local)
+        LOCAL_INSTALL=1
+        INSTALL_PREFIX="$(pwd)/bin"
+        shift
+        ;;
+esac
 
 echo -e "${BOLD}══════════════════════════════════════════════════════${RST}"
 echo -e "${BOLD}  CP C++ Setup — Homebrew GCC + bits/stdc++.h + PCH  ${RST}"
 echo -e "${BOLD}══════════════════════════════════════════════════════${RST}"
+echo -e "  Install prefix: ${BOLD}${INSTALL_PREFIX}${RST}"
 echo ""
 
 # ── 1. Detect Homebrew GCC ────────────────────────────────────────────────
@@ -37,7 +57,6 @@ HIGHEST=0
 for bin in /opt/homebrew/bin/g++-*; do
     [[ -x "$bin" ]] || continue
     ver="${bin##*g++-}"
-    # only match numeric version suffixes
     [[ "$ver" =~ ^[0-9]+$ ]] || continue
     if (( ver > HIGHEST )); then
         HIGHEST=$ver
@@ -48,7 +67,7 @@ done
 if [[ -z "$GXX" ]]; then
     die "No Homebrew GCC found in /opt/homebrew/bin.\n  Fix: brew install gcc"
 fi
-GXX_CMD="$(basename "$GXX")"   # e.g. g++-16
+GXX_CMD="$(basename "$GXX")"
 ok "Found: ${GXX}  ($("$GXX" --version | head -1))"
 
 # ── 2. C++ standard ───────────────────────────────────────────────────────
@@ -76,16 +95,19 @@ mkdir -p "${CP_DIR}/pch-release/bits"
 
 # ── 5. Install debug.h ────────────────────────────────────────────────────
 DEBUG_H="${SCRIPT_DIR}/debug.h"
-if [[ ! -f "$DEBUG_H" ]]; then
-    die "debug.h not found in ${SCRIPT_DIR} — run from the repo directory."
-fi
+[[ -f "$DEBUG_H" ]] || die "debug.h not found in ${SCRIPT_DIR} — run from the repo directory."
 cp "$DEBUG_H" "${CP_DIR}/include/debug.h"
-ok "Installed debug.h → ${CP_DIR}/include/debug.h"
+ok "debug.h → ${CP_DIR}/include/debug.h  (globally accessible via #include \"debug.h\")"
 
-# ── 6. Precompile stdc++.h (debug) ───────────────────────────────────────
+# ── 6. Install template.cpp ───────────────────────────────────────────────
+TMPL="${SCRIPT_DIR}/template.cpp"
+[[ -f "$TMPL" ]] || die "template.cpp not found in ${SCRIPT_DIR}."
+cp "$TMPL" "${CP_DIR}/template.cpp"
+ok "template.cpp → ${CP_DIR}/template.cpp  (used by cpnew)"
+
+# ── 7. Precompile stdc++.h (debug) ───────────────────────────────────────
 info "Precompiling stdc++.h [debug] …"
 cp "$STDC_H" "${CP_DIR}/pch-debug/bits/stdc++.h"
-# Flags must match cpc debug exactly so GCC recognises the PCH
 "$GXX" \
     -std="$CP_STD" -O2 \
     -Wall -Wextra -Wshadow -Wconversion \
@@ -98,7 +120,7 @@ cp "$STDC_H" "${CP_DIR}/pch-debug/bits/stdc++.h"
     -o "${CP_DIR}/pch-debug/bits/stdc++.h.gch"
 ok "PCH [debug]   → ${CP_DIR}/pch-debug/bits/stdc++.h.gch"
 
-# ── 7. Precompile stdc++.h (release) ─────────────────────────────────────
+# ── 8. Precompile stdc++.h (release) ─────────────────────────────────────
 info "Precompiling stdc++.h [release] …"
 cp "$STDC_H" "${CP_DIR}/pch-release/bits/stdc++.h"
 "$GXX" \
@@ -110,31 +132,46 @@ cp "$STDC_H" "${CP_DIR}/pch-release/bits/stdc++.h"
     -o "${CP_DIR}/pch-release/bits/stdc++.h.gch"
 ok "PCH [release] → ${CP_DIR}/pch-release/bits/stdc++.h.gch"
 
-# ── 8. Write config file ──────────────────────────────────────────────────
+# ── 9. Write global config ────────────────────────────────────────────────
 cat > "${CP_DIR}/cp.conf" <<EOF
 # Written by install.sh — re-run to refresh after brew upgrade gcc
 CP_GXX="${GXX}"
 CP_STD="${CP_STD}"
 CP_DIR="${CP_DIR}"
 EOF
-ok "Config written → ${CP_DIR}/cp.conf"
+ok "Config → ${CP_DIR}/cp.conf"
 
-# ── 9. Install cpc / cprun ────────────────────────────────────────────────
-info "Installing cpc and cprun → /opt/homebrew/bin/ …"
-for tool in cpc cprun; do
+# ── 10. Install cpc / cprun / cpnew ──────────────────────────────────────
+info "Installing tools → ${INSTALL_PREFIX}/ …"
+mkdir -p "$INSTALL_PREFIX"
+for tool in cpc cprun cpnew; do
     SRC="${SCRIPT_DIR}/${tool}"
     [[ -f "$SRC" ]] || die "${tool} not found in ${SCRIPT_DIR}"
-    cp "$SRC" "/opt/homebrew/bin/${tool}"
-    chmod +x "/opt/homebrew/bin/${tool}"
+    cp "$SRC" "${INSTALL_PREFIX}/${tool}"
+    chmod +x "${INSTALL_PREFIX}/${tool}"
+    ok "  ${INSTALL_PREFIX}/${tool}"
 done
-ok "Installed /opt/homebrew/bin/cpc"
-ok "Installed /opt/homebrew/bin/cprun"
 
-# ── 10. VS Code + CPH configuration ──────────────────────────────────────
+# For --local installs, remind user to add bin/ to PATH if needed
+if [[ $LOCAL_INSTALL -eq 1 ]]; then
+    echo ""
+    warn "Per-project install: tools are in ${INSTALL_PREFIX}/"
+    warn "Run them as  ./bin/cpc  or add to PATH:"
+    warn "  export PATH=\"\$(pwd)/bin:\$PATH\""
+fi
+
+# For --prefix installs outside Homebrew, check if prefix is on PATH
+if [[ $LOCAL_INSTALL -eq 0 ]] && [[ "$INSTALL_PREFIX" != "/opt/homebrew/bin" ]]; then
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_PREFIX"; then
+        warn "${INSTALL_PREFIX} is not on your PATH."
+        warn "Add to ~/.zshrc:  export PATH=\"${INSTALL_PREFIX}:\$PATH\""
+    fi
+fi
+
+# ── 11. VS Code + CPH configuration ──────────────────────────────────────
 echo ""
 info "Configuring VS Code + CPH …"
 
-# Get the real GCC C++ include paths for IntelliSense (bash 3.2 compatible)
 GCC_INCS=()
 while IFS= read -r line; do
     GCC_INCS+=("$line")
@@ -144,18 +181,15 @@ done < <(
     | grep -v '(framework'
 )
 
-# Build IntelliSense includePath JSON array
 INC_LINES=()
 INC_LINES+=("                \"\${workspaceFolder}/**\"")
 INC_LINES+=("                \"\${HOME}/.config/cp/include\"")
 for inc in "${GCC_INCS[@]}"; do
-    # normalise away /../ chains; skip non-existent and framework dirs
     if [[ -d "$inc" ]] && [[ "$inc" != *Frameworks* ]]; then
         norm="$(cd "$inc" 2>/dev/null && pwd)" && inc="$norm"
         INC_LINES+=("                \"${inc}\"")
     fi
 done
-# join with comma+newline
 INC_JSON=""
 for i in "${!INC_LINES[@]}"; do
     if (( i < ${#INC_LINES[@]} - 1 )); then
@@ -165,7 +199,6 @@ for i in "${!INC_LINES[@]}"; do
     fi
 done
 
-# Write c_cpp_properties.json directly with real paths
 VSCODE_DIR="${HOME}/.vscode-cp"
 mkdir -p "$VSCODE_DIR"
 cat > "${VSCODE_DIR}/c_cpp_properties.json" <<JSONEOF
@@ -195,14 +228,10 @@ ${INC_JSON}
 JSONEOF
 ok "c_cpp_properties.json → ${VSCODE_DIR}/c_cpp_properties.json"
 
-# CPH global settings — patch VS Code User settings.json
 VSCODE_SETTINGS="${HOME}/Library/Application Support/Code/User/settings.json"
 if [[ -f "$VSCODE_SETTINGS" ]]; then
-    # Build the CPH block
     CPH_COMMAND="${GXX_CMD}"
     CPH_ARGS="-std=${CP_STD} -O2 -Wall -Wextra -Wshadow -DLOCAL -I${CP_DIR}/include -I${CP_DIR}/pch-debug -D_GLIBCXX_DEBUG -g -fsanitize=address,undefined -fno-sanitize-recover=all"
-
-    # Use Python (ships with macOS) to safely merge JSON
     python3 - "$VSCODE_SETTINGS" "$CPH_COMMAND" "$CPH_ARGS" <<'PYEOF'
 import json, sys
 path, cmd, args = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -214,15 +243,12 @@ with open(path, "w") as f:
     json.dump(cfg, f, indent=4)
     f.write("\n")
 PYEOF
-    ok "CPH settings written → VS Code User settings.json"
-    ok "  cph.language.cpp.Command = ${CPH_COMMAND}"
-    ok "  cph.language.cpp.Args    = ${CPH_ARGS}"
+    ok "CPH → VS Code User settings.json  (command=${CPH_COMMAND})"
 else
-    warn "VS Code settings.json not found — skipping CPH auto-config."
-    warn "Manually set in VS Code: cph.language.cpp.Command = ${GXX_CMD}"
+    warn "VS Code settings.json not found — set CPH command manually: ${GXX_CMD}"
 fi
 
-# ── 11. Self-test ─────────────────────────────────────────────────────────
+# ── 12. Self-test ─────────────────────────────────────────────────────────
 echo ""
 info "Running self-test …"
 TMPDIR_TEST="$(mktemp -d)"
@@ -241,10 +267,10 @@ int main() {
 CPPEOF
 
 pushd "$TMPDIR_TEST" > /dev/null
-cpc test.cpp 2>&1
+"${INSTALL_PREFIX}/cpc" test.cpp 2>&1
 OUTPUT=$(./test 2>/dev/null)
 if [[ "$OUTPUT" == "OK" ]]; then
-    ok "Self-test passed (cout output: '${OUTPUT}')"
+    ok "Self-test passed"
 else
     warn "Unexpected output: '${OUTPUT}'"
 fi
@@ -254,17 +280,19 @@ popd > /dev/null
 echo ""
 echo -e "${BOLD}${GRN}══ Setup complete! ══${RST}"
 echo ""
+echo -e "  ${BOLD}New problem:${RST}       cpnew              → sol.cpp"
+echo -e "  ${BOLD}New contest:${RST}       cpnew A B C D E    → A.cpp … E.cpp"
+echo -e "  ${BOLD}New workspace:${RST}     cpnew --dir round  → round/ with .vscode/"
+echo ""
 echo -e "  ${BOLD}Compile (debug):${RST}   cpc sol.cpp"
 echo -e "  ${BOLD}Compile (submit):${RST}  cpc -r sol.cpp"
 echo -e "  ${BOLD}Compile + run:${RST}     cprun sol.cpp"
-echo -e "  ${BOLD}Template:${RST}          cp ${SCRIPT_DIR}/template.cpp sol.cpp"
 echo ""
-echo -e "  ${YEL}Tip:${RST} re-run this script after 'brew upgrade gcc' to rebuild PCH."
+echo -e "  ${YEL}Note:${RST} #include \"debug.h\" works from ANY directory — never copy it."
+echo -e "  ${YEL}Tip:${RST}  re-run this script after 'brew upgrade gcc' to rebuild PCH."
 echo ""
-echo -e "${BOLD}VS Code setup:${RST}"
-echo -e "  1. Copy .vscode/c_cpp_properties.json into your problem workspace:"
-echo -e "     mkdir -p <workspace>/.vscode"
-echo -e "     cp ${VSCODE_DIR}/c_cpp_properties.json <workspace>/.vscode/"
-echo -e "  2. CPH extension: already configured in VS Code User settings."
-echo -e "     Install: code --install-extension DivyanshuAgrawal.competitive-programming-helper"
+echo -e "${BOLD}Install modes:${RST}"
+echo -e "  Global (default): bash install.sh"
+echo -e "  User:             bash install.sh --prefix ~/.local"
+echo -e "  Per-project:      bash install.sh --local  (installs to ./bin/)"
 echo ""

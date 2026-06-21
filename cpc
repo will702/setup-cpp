@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # cpc — competitive-programming compile wrapper
+#
 # Usage:
 #   cpc sol.cpp            debug build (sanitizers + LOCAL + _GLIBCXX_DEBUG)
 #   cpc -r sol.cpp         release/submit build (clean, fast, no overhead)
 #   cpc --submit sol.cpp   same as -r
 #   cpc -h                 show help
 #
-# Config lives in ~/.config/cp/cp.conf (written by install.sh)
+# Config (lowest → highest priority):
+#   ~/.config/cp/cp.conf   global defaults (written by install.sh)
+#   .cpcrc                 per-project overrides (optional, in problem dir)
+#
+# .cpcrc example:
+#   CP_STD="c++17"                    # override standard for this project
+#   EXTRA_FLAGS="-DONLINE_JUDGE"      # append extra flags to every build
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-# ── load config ───────────────────────────────────────────────────────────
+# ── load global config ────────────────────────────────────────────────────
 CP_CONF="${HOME}/.config/cp/cp.conf"
 if [[ ! -f "$CP_CONF" ]]; then
     echo "cpc: config not found at $CP_CONF — run install.sh first" >&2
@@ -20,6 +27,23 @@ fi
 # shellcheck source=/dev/null
 source "$CP_CONF"
 # CP_GXX, CP_STD, CP_DIR are now set
+
+# ── load per-project overrides (.cpcrc in current or parent dirs) ─────────
+# Walk up directory tree looking for .cpcrc (stops at $HOME or /)
+_search="${PWD}"
+while [[ "$_search" != "/" && "$_search" != "$HOME" ]]; do
+    if [[ -f "${_search}/.cpcrc" ]]; then
+        # shellcheck source=/dev/null
+        source "${_search}/.cpcrc"
+        echo "[cpc] using local config: ${_search}/.cpcrc"
+        break
+    fi
+    _search="$(dirname "$_search")"
+done
+unset _search
+
+# EXTRA_FLAGS defaults to empty if not set in .cpcrc
+EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
 # ── argument parsing ──────────────────────────────────────────────────────
 RELEASE=0
@@ -64,6 +88,10 @@ Release flags: -O2 -Wall -Wextra
                (no sanitizers, no DLOCAL, no _GLIBCXX_DEBUG)
 
 Output binary: same name as source minus .cpp  (sol.cpp → ./sol)
+
+Per-project config (.cpcrc in problem directory):
+  CP_STD="c++17"              override C++ standard
+  EXTRA_FLAGS="-DSOME_MACRO"  append flags to every build
 EOF
     exit 0
 fi
@@ -89,9 +117,10 @@ COMMON_FLAGS=(
     "-Wall" "-Wextra" "-Wshadow" "-Wconversion"
     "-I${CP_DIR}/include"
 )
+# append per-project extra flags (may be empty)
+[[ -n "$EXTRA_FLAGS" ]] && COMMON_FLAGS+=($EXTRA_FLAGS)
 
 if [[ $RELEASE -eq 0 ]]; then
-    # debug
     FLAGS=(
         "${COMMON_FLAGS[@]}"
         "-O2"
@@ -104,7 +133,6 @@ if [[ $RELEASE -eq 0 ]]; then
     )
     LABEL="debug"
 else
-    # release / submit
     FLAGS=(
         "${COMMON_FLAGS[@]}"
         "-O2"

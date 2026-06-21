@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# cpnew — create new competitive programming problem file(s) from template
+#
+# Usage:
+#   cpnew                    create sol.cpp in current directory
+#   cpnew foo                create foo.cpp
+#   cpnew A B C D E          create A.cpp B.cpp C.cpp D.cpp E.cpp  (contest mode)
+#   cpnew --contest          create A.cpp … E.cpp  (Codeforces default)
+#   cpnew --contest A-G      create A.cpp … G.cpp
+#   cpnew --dir name         create name/ with sol.cpp + in.txt + .vscode/
+#   cpnew --dir name A B C   create name/ with A.cpp B.cpp C.cpp + in.txt files
+#   cpnew -h                 this help
+#
+# debug.h is globally accessible — no copying needed.
+# Just use:  #include "debug.h"  in any file compiled with cpc.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+# ── locate config and template ────────────────────────────────────────────
+CP_CONF="${HOME}/.config/cp/cp.conf"
+if [[ ! -f "$CP_CONF" ]]; then
+    echo "cpnew: config not found — run install.sh first" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+source "$CP_CONF"   # sets CP_GXX, CP_STD, CP_DIR
+
+TEMPLATE="${CP_DIR}/template.cpp"
+if [[ ! -f "$TEMPLATE" ]]; then
+    echo "cpnew: template not found at ${TEMPLATE} — run install.sh first" >&2
+    exit 1
+fi
+
+# ── ANSI ──────────────────────────────────────────────────────────────────
+GRN="\033[0;32m"; CYN="\033[0;36m"; YEL="\033[0;33m"; RST="\033[0m"; BOLD="\033[1m"
+ok()   { echo -e "${GRN}✓${RST} $*"; }
+info() { echo -e "${CYN}→${RST} $*"; }
+warn() { echo -e "${YEL}!${RST} $*"; }
+
+# ── helpers ───────────────────────────────────────────────────────────────
+stamp_file() {
+    local dest="$1"
+    if [[ -f "$dest" ]]; then
+        warn "${dest} already exists — skipping (use -f to overwrite)"
+        return
+    fi
+    cp "$TEMPLATE" "$dest"
+    ok "Created ${dest}"
+}
+
+stamp_contest_files() {
+    local dir="$1"; shift
+    local names=("$@")
+    for name in "${names[@]}"; do
+        local f="${dir}${name}.cpp"
+        stamp_file "$f"
+        # also create a matching in.txt if we're inside a dir
+        if [[ -n "$dir" ]]; then
+            touch "${dir}${name}_in.txt" 2>/dev/null || true
+        fi
+    done
+}
+
+vscode_setup() {
+    local dir="$1"
+    local vs="${dir}.vscode"
+    mkdir -p "$vs"
+    # copy the c_cpp_properties.json if available
+    if [[ -f "${HOME}/.vscode-cp/c_cpp_properties.json" ]]; then
+        cp "${HOME}/.vscode-cp/c_cpp_properties.json" "${vs}/c_cpp_properties.json"
+    fi
+    # write tasks.json inline
+    cat > "${vs}/tasks.json" << 'TASKEOF'
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CP: Debug Build",
+            "type": "shell",
+            "command": "cpc",
+            "args": ["${file}"],
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "CP: Run",
+            "type": "shell",
+            "command": "cprun",
+            "args": ["${file}"],
+            "group": { "kind": "test", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "CP: Release",
+            "type": "shell",
+            "command": "cpc",
+            "args": ["-r", "${file}"],
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+            "problemMatcher": "$gcc"
+        }
+    ]
+}
+TASKEOF
+    ok "VS Code config → ${vs}"
+}
+
+# ── help ──────────────────────────────────────────────────────────────────
+show_help() {
+    cat << 'EOF'
+cpnew — create competitive programming problem file(s) from template
+
+Usage:
+  cpnew                    sol.cpp in current directory
+  cpnew foo                foo.cpp in current directory
+  cpnew A B C D E          A.cpp B.cpp … (contest mode, multiple files)
+  cpnew --contest          A.cpp B.cpp C.cpp D.cpp E.cpp (Codeforces default)
+  cpnew --contest A-G      A.cpp B.cpp … G.cpp
+  cpnew --dir name         mkdir name/ → name/sol.cpp + in.txt + .vscode/
+  cpnew --dir round A B C  mkdir round/ → round/A.cpp round/B.cpp round/C.cpp
+  cpnew -f …               overwrite existing files
+  cpnew -h                 this help
+
+Notes:
+  • debug.h is globally accessible — never copy it.
+    Just write:  #include "debug.h"  in any file compiled with cpc.
+  • in.txt is created by cprun automatically; drop sample input there.
+  • .vscode/ gets c_cpp_properties.json + tasks.json (build: ⌘+Shift+B).
+EOF
+}
+
+# ── argument parsing ──────────────────────────────────────────────────────
+FORCE=0
+DIR_MODE=0
+CONTEST_MODE=0
+DIR_NAME=""
+NAMES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)    show_help; exit 0 ;;
+        -f|--force)   FORCE=1; shift ;;
+        --dir)
+            DIR_MODE=1
+            shift
+            # optional directory name argument (if next arg doesn't start with -)
+            if [[ $# -gt 0 && "$1" != -* ]]; then
+                DIR_NAME="$1"; shift
+            fi
+            ;;
+        --contest)
+            CONTEST_MODE=1; shift
+            # optional range like "A-G"
+            if [[ $# -gt 0 && "$1" =~ ^[A-Z]-[A-Z]$ ]]; then
+                START="${1:0:1}"; END="${1:2:1}"
+                for ((i = $(printf '%d' "'$START"); i <= $(printf '%d' "'$END"); i++)); do
+                    NAMES+=("$(printf "\\$(printf '%03o' "$i")")")
+                done
+                shift
+            else
+                NAMES=(A B C D E)
+            fi
+            ;;
+        -*)
+            echo "cpnew: unknown flag '$1' (try -h)" >&2; exit 1 ;;
+        *)
+            NAMES+=("$1"); shift ;;
+    esac
+done
+
+# default: no names given → sol
+if [[ ${#NAMES[@]} -eq 0 && $CONTEST_MODE -eq 0 ]]; then
+    NAMES=("sol")
+fi
+
+# ── handle --force: allow overwriting ─────────────────────────────────────
+stamp_file() {
+    local dest="$1"
+    if [[ -f "$dest" && $FORCE -eq 0 ]]; then
+        warn "${dest} already exists — skipping  (use -f to overwrite)"
+        return
+    fi
+    cp "$TEMPLATE" "$dest"
+    ok "Created ${dest}"
+}
+
+# ── DIR mode: create a subdirectory workspace ─────────────────────────────
+if [[ $DIR_MODE -eq 1 ]]; then
+    [[ -z "$DIR_NAME" ]] && { echo "cpnew: --dir needs a name" >&2; exit 1; }
+    mkdir -p "${DIR_NAME}"
+    info "Created directory: ${DIR_NAME}/"
+
+    if [[ ${#NAMES[@]} -eq 1 && "${NAMES[0]}" == "sol" ]]; then
+        stamp_file "${DIR_NAME}/sol.cpp"
+        touch "${DIR_NAME}/in.txt"
+        ok "Created ${DIR_NAME}/in.txt"
+    else
+        for name in "${NAMES[@]}"; do
+            stamp_file "${DIR_NAME}/${name}.cpp"
+            touch "${DIR_NAME}/${name}_in.txt"
+            ok "Created ${DIR_NAME}/${name}_in.txt"
+        done
+    fi
+
+    vscode_setup "${DIR_NAME}/"
+
+    echo ""
+    echo -e "${BOLD}Ready:${RST}"
+    echo -e "  cd ${DIR_NAME}"
+    for name in "${NAMES[@]}"; do
+        local_name="${name}.cpp"
+        [[ ${#NAMES[@]} -eq 1 && "${NAMES[0]}" == "sol" ]] && local_name="sol.cpp"
+        echo -e "  cprun ${local_name}"
+    done
+    exit 0
+fi
+
+# ── standard mode: stamp file(s) in current directory ─────────────────────
+for name in "${NAMES[@]}"; do
+    stamp_file "${name}.cpp"
+done
+
+# ── hint ──────────────────────────────────────────────────────────────────
+if [[ ${#NAMES[@]} -eq 1 ]]; then
+    echo ""
+    echo -e "  ${CYN}cpc${RST}  ${NAMES[0]}.cpp          debug build"
+    echo -e "  ${CYN}cprun${RST} ${NAMES[0]}.cpp         compile + run"
+    echo -e "  ${CYN}cpc -r${RST} ${NAMES[0]}.cpp        release build"
+else
+    echo ""
+    echo -e "  ${CYN}cprun${RST} ${NAMES[0]}.cpp  (and so on for each file)"
+fi
