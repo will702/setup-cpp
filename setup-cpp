@@ -41,16 +41,33 @@ find_asset_dir() {
     die "Cannot find debug.h. Install via 'brew install setup-cpp' or run from the repo."
 }
 
+# ── Homebrew prefix (/opt/homebrew on Apple Silicon, /usr/local on Intel) ──
+brew_prefix() {
+    local p=""
+    if command -v brew >/dev/null 2>&1; then
+        p="$(brew --prefix 2>/dev/null)" || p=""
+    fi
+    if [[ -z "$p" ]]; then
+        local cand
+        for cand in /opt/homebrew /usr/local; do
+            [[ -x "${cand}/bin/brew" ]] && { echo "$cand"; return 0; }
+        done
+    fi
+    [[ -n "$p" ]] || return 1
+    echo "$p"
+}
+
 # ── detect highest Homebrew GCC ───────────────────────────────────────────
 find_gxx() {
-    local gxx="" highest=0
-    for bin in /opt/homebrew/bin/g++-*; do
+    local bin_dir="$1"
+    local gxx="" highest=0 bin ver
+    for bin in "${bin_dir}"/g++-*; do
         [[ -x "$bin" ]] || continue
-        local ver="${bin##*g++-}"
+        ver="${bin##*g++-}"
         [[ "$ver" =~ ^[0-9]+$ ]] || continue
         if (( ver > highest )); then highest=$ver; gxx="$bin"; fi
     done
-    [[ -n "$gxx" ]] || die "No Homebrew GCC found.\n  Fix: brew install gcc"
+    [[ -n "$gxx" ]] || die "No Homebrew GCC found in ${bin_dir}.\n  Fix: brew install gcc"
     echo "$gxx"
 }
 
@@ -69,8 +86,10 @@ cmd_init() {
 
     # 1. GCC
     info "Detecting Homebrew GCC …"
-    local GXX
-    GXX="$(find_gxx)"
+    local BREW_PREFIX GXX
+    BREW_PREFIX="$(brew_prefix)" \
+        || die "Homebrew not found.\n  Fix: install from https://brew.sh"
+    GXX="$(find_gxx "${BREW_PREFIX}/bin")"
     local GXX_CMD
     GXX_CMD="$(basename "$GXX")"
     ok "Found: ${GXX}  ($("$GXX" --version | head -1))"
@@ -127,6 +146,8 @@ CONF
 
     # 8. VS Code IntelliSense config
     info "Generating VS Code IntelliSense config …"
+    local ARCH="linux-gcc-arm64"
+    if [[ "$(uname -m)" == "x86_64" ]]; then ARCH="linux-gcc-x64"; fi
     local GCC_INCS=()
     while IFS= read -r line; do
         GCC_INCS+=("$line")
@@ -163,7 +184,7 @@ ${INC_JSON}
             "defines": ["LOCAL", "_GLIBCXX_DEBUG"],
             "compilerPath": "${GXX}",
             "cppStandard": "${CP_STD}",
-            "intelliSenseMode": "linux-gcc-arm64",
+            "intelliSenseMode": "${ARCH}",
             "compilerArgs": ["-std=${CP_STD}", "-Wall", "-Wextra"]
         }
     ],
@@ -180,29 +201,122 @@ JSONEOF
     fi
 
     # 9. CPH (VS Code Competitive Programming Helper) settings
+    # settings.json is JSONC (comments + trailing commas are legal) — plain
+    # json.load() chokes on it, so strip comments before parsing. Parse
+    # failure must never abort init.
     local VSCODE_SETTINGS="${HOME}/Library/Application Support/Code/User/settings.json"
-    if [[ -f "$VSCODE_SETTINGS" ]]; then
-        local CPH_ARGS="-std=${CP_STD} -O2 -Wall -Wextra -Wshadow -DLOCAL \
+    local CPH_ARGS="-std=${CP_STD} -O2 -Wall -Wextra -Wshadow -DLOCAL \
 -I${CP_DIR}/include -I${CP_DIR}/pch-debug -D_GLIBCXX_DEBUG \
 -g -fsanitize=address,undefined -fno-sanitize-recover=all"
-        python3 - "$VSCODE_SETTINGS" "$GXX_CMD" "$CPH_ARGS" <<'PYEOF'
-import json, sys
+    if command -v python3 >/dev/null 2>&1; then
+        if python3 - "$VSCODE_SETTINGS" "$GXX_CMD" "$CPH_ARGS" <<'PYEOF'
+import json, os, sys
+
 path, cmd, args = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f: cfg = json.load(f)
+
+def load_jsonc(path):
+    """Parse JSON with // and /* */ comments and trailing commas allowed.
+    Returns (dict, had_comments). Raises on genuinely malformed input."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return {}, False
+    with open(path) as f:
+        text = f.read()
+    out = []
+    had_comments = False
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if text[i:i+2] == "//":
+            had_comments = True
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if text[i:i+2] == "/*":
+            had_comments = True
+            i += 2
+            while i < n and text[i:i+2] != "*/":
+                i += 1
+            i = min(i + 2, n)
+            continue
+        if c == ",":
+            # trailing comma: only whitespace/comments before } or ] → drop it
+            j = i + 1
+            while j < n:
+                if text[j] in " \t\r\n":
+                    j += 1
+                elif text[j:j+2] == "//":
+                    while j < n and text[j] != "\n":
+                        j += 1
+                elif text[j:j+2] == "/*":
+                    j += 2
+                    while j < n and text[j:j+2] != "*/":
+                        j += 1
+                    j = min(j + 2, n)
+                else:
+                    break
+            if j < n and text[j] in "}]":
+                i += 1
+                continue
+        out.append(c)
+        i += 1
+    stripped = "".join(out)
+    if not stripped.strip():
+        return {}, had_comments
+    return json.loads(stripped), had_comments
+
+cfg, had_comments = load_jsonc(path)
 cfg["cph.language.cpp.Command"] = cmd
 cfg["cph.language.cpp.Args"]    = args
-with open(path, "w") as f: json.dump(cfg, f, indent=4); f.write("\n")
+d = os.path.dirname(path)
+if d:
+    os.makedirs(d, exist_ok=True)
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=4)
+    f.write("\n")
+if had_comments:
+    sys.stderr.write("       note: comments in settings.json were removed when rewriting it\n")
 PYEOF
-        ok "CPH → VS Code User settings.json  (command=${GXX_CMD})"
+        then
+            ok "CPH → VS Code User settings.json  (command=${GXX_CMD})"
+        else
+            warn "Could not update VS Code settings.json — set CPH manually:"
+            warn "  \"cph.language.cpp.Command\": \"${GXX_CMD}\""
+        fi
+    else
+        warn "python3 not found — set CPH manually: cph.language.cpp.Command = ${GXX_CMD}"
     fi
 
     # 10. Self-test
     echo ""
-    info "Running self-test …"
-    local tmpdir=""
-    tmpdir="$(mktemp -d)"
-    trap '[[ -n "${tmpdir:-}" ]] && rm -rf "$tmpdir"' EXIT
-    cat > "${tmpdir}/test.cpp" <<'CPPEOF'
+    local CPC_BIN=""
+    if [[ -x "${SCRIPT_DIR}/cpc" ]]; then
+        CPC_BIN="${SCRIPT_DIR}/cpc"
+    else
+        CPC_BIN="$(command -v cpc 2>/dev/null || true)"
+    fi
+    if [[ -z "$CPC_BIN" ]]; then
+        warn "cpc not found — skipped self-test (install tools or run from the repo)"
+    else
+        info "Running self-test …"
+        local tmpdir=""
+        tmpdir="$(mktemp -d)"
+        trap '[[ -n "${tmpdir:-}" ]] && rm -rf "$tmpdir"' EXIT
+        cat > "${tmpdir}/test.cpp" <<'CPPEOF'
 #include <bits/stdc++.h>
 #include "debug.h"
 using namespace std;
@@ -213,12 +327,16 @@ int main() {
     cout << "OK\n";
 }
 CPPEOF
-    pushd "$tmpdir" > /dev/null
-    cpc test.cpp 2>&1
-    local out
-    out=$(./test 2>/dev/null)
-    [[ "$out" == "OK" ]] && ok "Self-test passed" || warn "Unexpected: '${out}'"
-    popd > /dev/null
+        pushd "$tmpdir" > /dev/null
+        if "$CPC_BIN" test.cpp; then
+            local out
+            out=$(./test 2>/dev/null)
+            [[ "$out" == "OK" ]] && ok "Self-test passed" || warn "Unexpected: '${out}'"
+        else
+            warn "Self-test compile failed — see compiler output above"
+        fi
+        popd > /dev/null
+    fi
 
     echo ""
     echo -e "${BOLD}${GRN}══ Ready! ══${RST}"
@@ -251,7 +369,10 @@ cmd_doctor() {
 
     echo -e "${BOLD}setup-cpp doctor${RST}"
     echo ""
-    _chk "Homebrew GCC found"        "ls /opt/homebrew/bin/g++-* 2>/dev/null | grep -q ." \
+    local brew_bin
+    brew_bin="$(brew_prefix 2>/dev/null || true)"
+    brew_bin="${brew_bin:-/opt/homebrew}/bin"
+    _chk "Homebrew GCC found"        "ls ${brew_bin}/g++-* 2>/dev/null | grep -q ." \
          "brew install gcc"
     _chk "cp.conf exists"            "[[ -f ${HOME}/.config/cp/cp.conf ]]" \
          "setup-cpp init"

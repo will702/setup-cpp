@@ -18,10 +18,11 @@ class SetupCpp < Formula
     bin.install "cpnew"
     bin.install "setup-cpp"
 
-    # Assets read by setup-cpp init and cpnew
+    # Assets read by setup-cpp init and cpnew.
+    # c_cpp_properties.json is NOT shipped: it is generated per-machine by
+    # 'setup-cpp init' (compiler path + include dirs differ on every install).
     (share/"setup-cpp").install "debug.h"
     (share/"setup-cpp").install "template.cpp"
-    (share/"setup-cpp/vscode-templates").install "vscode-templates/c_cpp_properties.json"
     (share/"setup-cpp/vscode-templates").install "vscode-templates/tasks.json"
   end
 

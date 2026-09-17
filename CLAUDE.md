@@ -18,7 +18,8 @@ After running `bash install.sh`, three commands become available globally: `cpc`
   pch-debug/bits/      # stdc++.h + stdc++.h.gch (debug flags)
   pch-release/bits/    # stdc++.h + stdc++.h.gch (release flags)
 ~/.vscode-cp/
-  c_cpp_properties.json  # IntelliSense config (cpnew --dir copies this)
+  c_cpp_properties.json  # GENERATED per-machine by init (never ship a static one)
+  tasks.json             # canonical build tasks (cpnew --dir copies both files)
 ```
 
 ## Key invariant: PCH flag matching
@@ -27,7 +28,13 @@ After running `bash install.sh`, three commands become available globally: `cpc`
 
 ## Compiler detection
 
-`install.sh` and `cpc`/`cprun`/`cpnew` all resolve the compiler at runtime by scanning `/opt/homebrew/bin/g++-*` and picking the highest numeric suffix. The result is written to `~/.config/cp/cp.conf` as `CP_GXX`. This means the repo contains no hardcoded version number — `g++-16` today, `g++-17` after `brew upgrade gcc`.
+`install.sh` and `setup-cpp` resolve the Homebrew prefix at runtime (`brew --prefix`, falling back to `/opt/homebrew` then `/usr/local` — Intel Macs use the latter), then scan `<prefix>/bin/g++-*` and pick the highest numeric suffix. The result is written to `~/.config/cp/cp.conf` as `CP_GXX`. This means the repo contains no hardcoded version number or prefix — `g++-16` today, `g++-17` after `brew upgrade gcc`, `/usr/local/bin/g++-14` on an Intel Mac.
+
+## VS Code config generation
+
+`c_cpp_properties.json` must never be a static file in the repo — compiler path, include dirs, and `intelliSenseMode` (arm64 vs x64) differ on every machine, so `setup-cpp init` / `install.sh` generate it at setup time into `~/.vscode-cp/`. `cpnew --dir` copies the generated files from `~/.vscode-cp/` into the new workspace.
+
+The CPH merge into VS Code `settings.json` uses a tolerant JSONC parser (VS Code allows comments and trailing commas there; plain `json.loads` crashes on them, which would abort `setup-cpp init` under `set -e`). The identical Python block is duplicated in `setup-cpp` and `install.sh` — keep them in sync.
 
 ## Config layering in `cpc`
 
@@ -45,7 +52,7 @@ After running `bash install.sh`, three commands become available globally: `cpc`
 
 | Command | Installs to | Use case |
 |---|---|---|
-| `bash install.sh` | `/opt/homebrew/bin/` | default, already on PATH |
+| `bash install.sh` | Homebrew `bin/` (`/opt/homebrew/bin` or `/usr/local/bin`) | default, already on PATH |
 | `bash install.sh --prefix ~/.local` | `~/.local/bin/` | avoid writing to Homebrew |
 | `bash install.sh --local` | `./bin/` | per-project, shared repo |
 | `bash install.sh --uninstall` | removes global + `~/.config/cp` | clean slate |

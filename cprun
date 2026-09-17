@@ -15,7 +15,11 @@
 set -euo pipefail
 
 # ── locate cpc (same directory as this script when installed side-by-side) ──
-CPC_PATH="$(dirname "$(realpath "$0")")/cpc"
+SELF="$0"
+if command -v realpath >/dev/null 2>&1; then
+    SELF="$(realpath "$0" 2>/dev/null || echo "$0")"
+fi
+CPC_PATH="$(dirname "$SELF")/cpc"
 if [[ ! -x "$CPC_PATH" ]]; then
     CPC_PATH="$(command -v cpc 2>/dev/null)" || {
         echo "cprun: cannot find cpc — run install.sh" >&2

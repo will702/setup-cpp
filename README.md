@@ -19,7 +19,7 @@ setup-cpp init
 ```bash
 git clone https://github.com/will702/setup-cpp.git
 cd setup-cpp
-bash install.sh          # global → /opt/homebrew/bin/
+bash install.sh          # global → Homebrew bin/ (/opt/homebrew/bin on Apple Silicon, /usr/local/bin on Intel)
 ```
 
 Other install targets:
@@ -62,7 +62,7 @@ cpnew A B C D E           # A.cpp … E.cpp
 cpnew --contest           # A.cpp … E.cpp  (Codeforces default)
 cpnew --contest A-G       # A.cpp … G.cpp
 cpnew --dir round         # mkdir round/ → sol.cpp + in.txt + .vscode/
-cpnew --dir round A B C   # mkdir round/ → A.cpp B.cpp C.cpp + in.txt files
+cpnew --dir round A B C   # mkdir round/ → A.cpp B.cpp C.cpp + in.txt
 cpnew -f sol              # overwrite existing sol.cpp
 ```
 
@@ -181,7 +181,7 @@ EXTRA_FLAGS="-DONLINE_JUDGE"  # append to every build
   # or manually:
   mkdir -p .vscode && cp ~/.vscode-cp/c_cpp_properties.json .vscode/
   ```
-- **CPH** (Competitive Programming Helper) — pre-configured to use `g++-16` with debug flags. Install the extension:
+- **CPH** (Competitive Programming Helper) — pre-configured to use your Homebrew `g++` (auto-detected at `setup-cpp init`) with debug flags. Install the extension:
   ```bash
   code --install-extension DivyanshuAgrawal.competitive-programming-helper
   ```

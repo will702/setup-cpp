@@ -38,38 +38,32 @@ info() { echo -e "${CYN}→${RST} $*"; }
 warn() { echo -e "${YEL}!${RST} $*"; }
 
 # ── helpers ───────────────────────────────────────────────────────────────
+# FORCE is set during argument parsing below; stamp_file is only called after.
 stamp_file() {
     local dest="$1"
-    if [[ -f "$dest" ]]; then
-        warn "${dest} already exists — skipping (use -f to overwrite)"
+    if [[ -f "$dest" && $FORCE -eq 0 ]]; then
+        warn "${dest} already exists — skipping  (use -f to overwrite)"
         return
     fi
     cp "$TEMPLATE" "$dest"
     ok "Created ${dest}"
 }
 
-stamp_contest_files() {
-    local dir="$1"; shift
-    local names=("$@")
-    for name in "${names[@]}"; do
-        local f="${dir}${name}.cpp"
-        stamp_file "$f"
-        # also create a matching in.txt if we're inside a dir
-        if [[ -n "$dir" ]]; then
-            touch "${dir}${name}_in.txt" 2>/dev/null || true
-        fi
-    done
-}
-
 vscode_setup() {
     local dir="$1"
     local vs="${dir}.vscode"
     mkdir -p "$vs"
-    # copy the c_cpp_properties.json if available
+    # Prefer the per-machine configs written by 'setup-cpp init' — they match
+    # the local compiler/include paths (always correct on this machine).
     if [[ -f "${HOME}/.vscode-cp/c_cpp_properties.json" ]]; then
         cp "${HOME}/.vscode-cp/c_cpp_properties.json" "${vs}/c_cpp_properties.json"
     fi
-    # write tasks.json inline
+    if [[ -f "${HOME}/.vscode-cp/tasks.json" ]]; then
+        cp "${HOME}/.vscode-cp/tasks.json" "${vs}/tasks.json"
+        ok "VS Code config → ${vs}"
+        return
+    fi
+    # Fallback: minimal tasks.json (init has not been run on this machine)
     cat > "${vs}/tasks.json" << 'TASKEOF'
 {
     "version": "2.0.0",
@@ -104,7 +98,7 @@ vscode_setup() {
     ]
 }
 TASKEOF
-    ok "VS Code config → ${vs}"
+    ok "VS Code config → ${vs}  (fallback — run 'setup-cpp init' for full config)"
 }
 
 # ── help ──────────────────────────────────────────────────────────────────
@@ -175,17 +169,6 @@ if [[ ${#NAMES[@]} -eq 0 && $CONTEST_MODE -eq 0 ]]; then
     NAMES=("sol")
 fi
 
-# ── handle --force: allow overwriting ─────────────────────────────────────
-stamp_file() {
-    local dest="$1"
-    if [[ -f "$dest" && $FORCE -eq 0 ]]; then
-        warn "${dest} already exists — skipping  (use -f to overwrite)"
-        return
-    fi
-    cp "$TEMPLATE" "$dest"
-    ok "Created ${dest}"
-}
-
 # ── DIR mode: create a subdirectory workspace ─────────────────────────────
 if [[ $DIR_MODE -eq 1 ]]; then
     [[ -z "$DIR_NAME" ]] && { echo "cpnew: --dir needs a name" >&2; exit 1; }
@@ -194,15 +177,14 @@ if [[ $DIR_MODE -eq 1 ]]; then
 
     if [[ ${#NAMES[@]} -eq 1 && "${NAMES[0]}" == "sol" ]]; then
         stamp_file "${DIR_NAME}/sol.cpp"
-        touch "${DIR_NAME}/in.txt"
-        ok "Created ${DIR_NAME}/in.txt"
     else
         for name in "${NAMES[@]}"; do
             stamp_file "${DIR_NAME}/${name}.cpp"
-            touch "${DIR_NAME}/${name}_in.txt"
-            ok "Created ${DIR_NAME}/${name}_in.txt"
         done
     fi
+    # one shared in.txt — cprun auto-feeds it in debug mode
+    touch "${DIR_NAME}/in.txt"
+    ok "Created ${DIR_NAME}/in.txt"
 
     vscode_setup "${DIR_NAME}/"
 
