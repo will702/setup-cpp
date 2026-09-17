@@ -6,15 +6,9 @@
 
 ## Install
 
-### Via Homebrew (recommended)
 
-```bash
-brew tap will702/setup-cpp https://github.com/will702/setup-cpp
-brew install setup-cpp
-setup-cpp init
-```
 
-### From source
+### From source (recommended)
 
 ```bash
 git clone https://github.com/will702/setup-cpp.git
